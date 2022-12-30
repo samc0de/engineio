@@ -34,12 +34,15 @@ engineio.onEvent(client, "greeting", (data: JsonNode) =>
 
 ## API
 `new(url: string, asyncHandlers = true, threadHandlers = false): EngineIoClient`
+
 Creates a new EngineIoClient object and connects to the specified Engine.IO server.
 
 `sendMessage(client: EngineIoClient, event: string, data: JsonNode)`
+
 Sends a message to the server.
 
 `onEvent(client: EngineIoClient, event: string, handler: proc(data: JsonNode))`
+
 Registers a handler for the specified event.
 
 ## License
