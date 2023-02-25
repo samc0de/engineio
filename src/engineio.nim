@@ -1,5 +1,5 @@
-import asyncdispatch, httpbeast, json, os, strformat, asyncnet, tables, httpclient  # ws
-import sugar
+import asyncdispatch, httpbeast, json, os, strformat, ws, tables, httpclient  # asyncnet,
+import sugar, std/threadpool
 
 # Define a Socket.IO client type
 type
@@ -25,7 +25,9 @@ proc new(url: string, asyncHandlers:bool = true, threadHandlers:bool = false, po
   # let req = request(client, url)
   # client.doRequest(req)
   let ws = newAsyncSocket()
-  discard ws.connect(url, Port(port))
+  # await ws.connect(url, Port(port))  # waitfor
+  waitFor ws.connect(url, Port(port))  # waitfor
+  # discard ws.connect(url, Port(port))
   result = SocketIoClient(
     # ws: await newWebSocket(url),
     ws: ws,
@@ -55,7 +57,7 @@ proc sendMessage(client: SocketIoClient, event: string, data: JsonNode) {.async.
   let msg = %*{"event": event, "data": data}
 
   # Send the message over the WebSocket
-  await client.ws.sendString(msg.toJson())
+  await client.ws.send($msg)
 
 
 # Define a function for handling incoming messages
@@ -77,21 +79,21 @@ proc handleMessage(client: SocketIoClient, msg: JsonNode) {.async.} =
       if event in client.eventHandlers:
         # Execute the event handler
         if client.asyncHandlers:
-          asyncDo client.eventHandlers[event](data)
+           client.eventHandlers[event](data)
         elif client.threadHandlers:
           spawn client.eventHandlers[event](data)
         else:
           client.eventHandlers[event](data)
     of 3:
       # Handle an acknowledgement message
-      let id = msg["id"].getInt()
+      let id = $msg["id"]  # .getInt()
       let data = msg["data"]
 
       # Check if the acknowledgement has a registered handler
       if id in client.messageHandlers:
         # Execute the acknowledgement handler
         if client.asyncHandlers:
-          asyncDo client.messageHandlers[id](data)
+          client.messageHandlers[id](data)
         elif client.threadHandlers:
           spawn client.messageHandlers[id](data)
         else:
@@ -99,7 +101,7 @@ proc handleMessage(client: SocketIoClient, msg: JsonNode) {.async.} =
     of 4:
       # Handle an error message
       let data = msg["data"]
-      echo "Received error message: ", data.toJson()
+      echo "Received error message: ", $data
     else:
       echo "Received unexpected message type: ", msgType
 
@@ -107,7 +109,7 @@ proc handleMessage(client: SocketIoClient, msg: JsonNode) {.async.} =
 proc run(client: SocketIoClient) {.async.} =
   # Listen for incoming messages on the WebSocket
   while true:
-    let msg = await client.ws.receiveString()
+    let msg = await client.ws.recv()
     let msgJson = parseJson(msg)
     if msgJson == nil:
       echo "Received invalid message: ", msg
