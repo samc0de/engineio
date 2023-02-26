@@ -1,37 +1,31 @@
 import asyncdispatch, httpbeast, json, os, strformat, ws, tables, httpclient  # asyncnet,
-import sugar, std/threadpool
+import sugar, std/threadpool, std/oids
 
 # Define a Socket.IO client type
 type
-  SocketIoClient = object
-    ws: AsyncSocket
+  SocketIoClient* = object
+    url: string
+    socket: WebSocket
     eventHandlers: Table[string, proc(data: JsonNode)]
     messageHandlers: Table[string, proc(data: JsonNode)]
     asyncHandlers: bool
     threadHandlers: bool
 
-  WebSocketClient = ref object
-    url: string
-    sock: AsyncSocket
-    onConnect: proc()
-    onDisconnect: proc()
-    onError: proc(err: Exception)
-    onMessage: proc(msg: string)
+ #  WebSocketClient = ref object
+ #    url: string
+ #    sock: AsyncSocket
+ #    onConnect: proc()
+ #    onDisconnect: proc()
+ #    onError: proc(err: Exception)
+ #    onMessage: proc(msg: string)
 
 
 # Set up the client
 proc new(url: string, asyncHandlers:bool = true, threadHandlers:bool = false, port:int=443): SocketIoClient =
-  # let client = newHttpClient()
-  # let req = request(client, url)
-  # client.doRequest(req)
-  let ws = newAsyncSocket()
-  # await ws.connect(url, Port(port))  # waitfor
-  waitFor ws.connect(url, Port(port))  # waitfor
-  # discard ws.connect(url, Port(port))
+  let sock = waitFor newWebSocket(url)
   result = SocketIoClient(
-    # ws: await newWebSocket(url),
-    ws: ws,
-    # ws: newAsyncSocket()(url),
+    url: url,
+    socket: sock,
     eventHandlers: initTable[string, proc(data: JsonNode)](),
     messageHandlers: initTable[string, proc(data: JsonNode)](),
     asyncHandlers: asyncHandlers,
@@ -40,10 +34,10 @@ proc new(url: string, asyncHandlers:bool = true, threadHandlers:bool = false, po
 
 # proc newWebSocketClient*(url: string, onC: proc(s: string)=lambda(s: echo(s)), onD: proc(s: string)=lambda(s: echo(s)), onE: proc(s: string)=lambda(s: echo(s)), onM: proc(s: string)=lambda(s: echo(s)) ): WebSocketClient =
 # proc newWebSocketClient*(url: string, onC: (s: string) => echo(s), onD: (s: string) =>  echo(s), onE: (s: string) => echo(s), onM: (s: string) => echo(s) ): WebSocketClient =
-proc newWebSocketClient*(url: string, onC: proc = echo, onD: proc =  echo, onE: proc = echo, onM: proc = echo ): WebSocketClient =
-  result = WebSocketClient(
+proc newSocketIoClient*(url: string, onC: proc = echo, onD: proc =  echo, onE: proc = echo, onM: proc = echo ): SocketIoClient =
+  result = SocketIoClient(
   url: url,
-  sock: newAsyncSocket(),
+  socket: waitFor newWebSocket(url),
   onConnect: onC,
   onDisconnect: onD,
   onError: onE,
@@ -57,7 +51,7 @@ proc sendMessage(client: SocketIoClient, event: string, data: JsonNode) {.async.
   let msg = %*{"event": event, "data": data}
 
   # Send the message over the WebSocket
-  await client.ws.send($msg)
+  await client.socket.send($msg)
 
 
 # Define a function for handling incoming messages
@@ -109,7 +103,7 @@ proc handleMessage(client: SocketIoClient, msg: JsonNode) {.async.} =
 proc run(client: SocketIoClient) {.async.} =
   # Listen for incoming messages on the WebSocket
   while true:
-    let msg = await client.ws.recv()
+    let msg = await client.socket.receiveStrPacket()
     let msgJson = parseJson(msg)
     if msgJson == nil:
       echo "Received invalid message: ", msg
@@ -120,34 +114,34 @@ proc run(client: SocketIoClient) {.async.} =
 # Define a function for connecting to the server
 proc connect(client: SocketIoClient) {.async.} =
   # Send a "connect" message to the server
-  await sendMessage(client, "connect", %{})
+  await sendMessage(client, "connect", JsonNode())
 
 # Define a function for disconnecting from the server
 proc disconnect(client: SocketIoClient) {.async.} =
   # Send a "disconnect" message to the server
-  await sendMessage(client, "disconnect", %{})
+  await sendMessage(client, "disconnect", JsonNode())
 
 # Define a function for handling "connect" events
-proc onConnect(client: SocketIoClient, handler: proc(data: JsonNode)) =
+proc onConnect(client: SocketIoClient, handler: proc) =
   # Register the event handler
   client.eventHandlers["connect"] = handler
 
 # Define a function for handling "disconnect" events
-proc onDisconnect(client: SocketIoClient, handler: proc(data: JsonNode)) =
+proc onDisconnect(client: SocketIoClient, handler: proc) =
   # Register the event handler
   client.eventHandlers["disconnect"] = handler
 
 # Define a function for handling "event" events
-proc onEvent(client: SocketIoClient, event: string, handler: proc(data: JsonNode)) =
+proc onEvent(client: SocketIoClient, event: string, handler: proc) =
   # Register the event handler
   client.eventHandlers[event] = handler
 
 # Define a function for sending an "event" message to the server
-proc emitEvent(client: SocketIoClient, event: string, data: JsonNode, ack: proc(data: JsonNode) = nil) {.async.} =
+proc emitEvent(client: SocketIoClient, event: string, data: JsonNode, ack: proc = nil) {.async.} =
   # Check if an acknowledgement handler was provided
   if ack != nil:
     # Generate a unique message ID
-    let id = genUuid()
+    let id = $genOid()
 
     # Register the acknowledgement handler
     client.messageHandlers[id] = ack
@@ -157,17 +151,3 @@ proc emitEvent(client: SocketIoClient, event: string, data: JsonNode, ack: proc(
   else:
     # Send the "event" message without a message ID
     await sendMessage(client, "event", %*{"event": event, "data": data})
-
-
-
-proc new(url: string, asyncHandlers = true, threadHandlers = false): EngineIoClient =
-  let client = newHttpClient()
-  let req = newRequest(Method.get, url)
-  client.doRequest(req)
-  result = EngineIoClient(
-    ws = newWebSocket(req, client),
-    eventHandlers = initTable[string, proc(data: JsonNode)],
-    messageHandlers = initTable[string, proc(data: JsonNode)],
-    asyncHandlers = asyncHandlers,
-    threadHandlers = threadHandlers
-  )
